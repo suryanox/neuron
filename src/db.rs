@@ -72,31 +72,39 @@ impl Database {
         )?;
 
         if exists > 0 {
-            if self.conn.query_row("SELECT COUNT(*) FROM nodes_fts LIMIT 1", [], |_| Ok(())).is_ok() {
+            if self
+                .conn
+                .query_row("SELECT COUNT(*) FROM nodes_fts LIMIT 1", [], |_| Ok(()))
+                .is_ok()
+            {
                 return Ok(());
             }
             let _ = self.conn.execute_batch(
-                "DROP TRIGGER IF EXISTS nodes_ai; DROP TRIGGER IF EXISTS nodes_ad; DROP TRIGGER IF EXISTS nodes_au; DROP TABLE IF EXISTS nodes_fts;"
+                "DROP TRIGGER IF EXISTS nodes_ai; DROP TRIGGER IF EXISTS nodes_ad; DROP TRIGGER IF EXISTS nodes_au; DROP TABLE IF EXISTS nodes_fts;",
             );
         }
 
         self.conn.execute_batch(
             r#"
-            CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(id, content);
+            CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(content, content='nodes', content_rowid='rowid');
+
             CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
-                INSERT INTO nodes_fts(id, content) VALUES (new.id, new.content);
+                INSERT INTO nodes_fts(rowid, content) VALUES (new.rowid, new.content);
             END;
+
             CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
-                DELETE FROM nodes_fts WHERE id = old.id;
+                INSERT INTO nodes_fts(nodes_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
             END;
+
             CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
-                UPDATE nodes_fts SET content = new.content WHERE id = old.id;
+                INSERT INTO nodes_fts(nodes_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+                INSERT INTO nodes_fts(rowid, content) VALUES (new.rowid, new.content);
             END;
             "#,
         )?;
 
         self.conn.execute(
-            "INSERT OR IGNORE INTO nodes_fts(id, content) SELECT id, content FROM nodes",
+            "INSERT OR IGNORE INTO nodes_fts(rowid, content) SELECT rowid, content FROM nodes",
             [],
         )?;
 
@@ -118,7 +126,7 @@ impl Database {
 
     pub fn get_recent(&self, limit: usize) -> Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, parent_id, content, created_at FROM nodes ORDER BY created_at DESC LIMIT ?1"
+            "SELECT id, parent_id, content, created_at FROM nodes ORDER BY created_at DESC LIMIT ?1",
         )?;
         let nodes = stmt
             .query_map(params![limit as i64], |row| {
@@ -141,13 +149,14 @@ impl Database {
         }
 
         let search_query = format!("{}*", query.replace('"', ""));
+
         let mut stmt = self.conn.prepare(
             r#"
             SELECT n.id, n.parent_id, n.content, n.created_at
             FROM nodes n
-            INNER JOIN nodes_fts fts ON n.id = fts.id
+            JOIN nodes_fts ON n.rowid = nodes_fts.rowid
             WHERE nodes_fts MATCH ?1
-            ORDER BY rank
+            ORDER BY bm25(nodes_fts)
             LIMIT 50
             "#,
         )?;
