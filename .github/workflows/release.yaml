@@ -17,6 +17,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.check_tag.outputs.exists == 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,7 +30,6 @@ jobs:
           TAG="v${VERSION}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}, Tag: ${TAG}"
 
       - name: Check if tag exists
         id: check_tag
@@ -53,6 +53,7 @@ jobs:
 
   build:
     needs: version
+    if: needs.version.outputs.should_release == 'true'
     strategy:
       matrix:
         include:
@@ -80,16 +81,21 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/neuron dist/neuron-${{ matrix.target }}
-          cd dist && tar -czvf neuron-${{ matrix.target }}.tar.gz neuron-${{ matrix.target }}
+          cd dist
+          tar -czvf neuron-${{ matrix.target }}.tar.gz neuron-${{ matrix.target }}
+          shasum -a 256 neuron-${{ matrix.target }}.tar.gz > neuron-${{ matrix.target }}.tar.gz.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: neuron-${{ matrix.target }}
-          path: dist/neuron-${{ matrix.target }}.tar.gz
+          path: |
+            dist/neuron-${{ matrix.target }}.tar.gz
+            dist/neuron-${{ matrix.target }}.tar.gz.sha256
 
   release:
     needs: [version, build]
+    if: needs.version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -103,7 +109,9 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Release ${{ needs.version.outputs.tag }}
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.sha256
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
