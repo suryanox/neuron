@@ -1,0 +1,22 @@
+[package]
+name = "neuron"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/suryanox/neuron"
+authors = ["suryanox"]
+
+[dependencies]
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+unicode-width = "0.2"
+dirs = "6.0.0"
+arboard = "3.4"
+
+[profile.release]
+lto = true
+strip = true
